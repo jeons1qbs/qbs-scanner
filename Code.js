@@ -201,6 +201,43 @@ function getRecentUpdates() {
 }
 
 // ==========================================
+// 7. SHEET EDIT TRIGGER (for direct edits)
+// ==========================================
+function onEdit(e) {
+  try {
+    var sheet = e.source.getActiveSheet();
+    var targetSheetName = getConfig_();
+    if (sheet.getName() !== targetSheetName) return;
+
+    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    var colMap = getColumnMap_(headers);
+
+    var range = e.range;
+    var startRow = range.getRow();
+    var endRow = startRow + range.getNumRows() - 1;
+    if (startRow <= 1) startRow = 2; // skip header
+
+    var cache = CacheService.getScriptCache();
+    var raw = cache.get('recentUpdates');
+    var updates = raw ? JSON.parse(raw) : [];
+    var nowMs = Date.now();
+
+    for (var row = startRow; row <= endRow; row++) {
+      var assetNo = sheet.getRange(row, colMap.assetNo + 1).getValue().toString().trim();
+      var timestamp = sheet.getRange(row, colMap.timestamp + 1).getValue().toString().trim();
+      var username = sheet.getRange(row, colMap.username + 1).getValue().toString().trim();
+      if (!assetNo || !timestamp) continue;
+      updates.push({ assetNo: assetNo, user: username || 'sheet-edit', timestampStr: timestamp, ts: nowMs });
+    }
+
+    updates = updates.filter(function(u) { return nowMs - u.ts < 120000; });
+    cache.put('recentUpdates', JSON.stringify(updates), 300);
+  } catch(err) {
+    // onEdit must never throw — silently fail
+  }
+}
+
+// ==========================================
 // UTILITY FUNCTIONS
 // ==========================================
 function getColumnMap_(headers) {
