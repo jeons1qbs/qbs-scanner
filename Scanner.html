@@ -18,7 +18,9 @@
         bulkMode: false,
         selectedAssets: [],
 
-        isProcessing: false
+        isProcessing: false,
+        isContinuous: false,
+        syncInterval: null
       }
     },
     computed: {
@@ -163,13 +165,34 @@
       },
 
       openWebScanner() {
-        window.open('https://jeons1qbs.github.io/qbs-scanner/wrapper.html', '_blank');
+        var url = 'https://jeons1qbs.github.io/qbs-scanner/wrapper.html';
+        url += '?continuous=' + (this.isContinuous ? 'true' : 'false');
+        window.open(url, '_blank');
       },
 
       receiveMessage(event) {
         if (event.data && event.data.type === 'BARCODE') {
           this.handleScan(event.data.value);
         }
+      },
+
+      pollUpdates() {
+        if (typeof google === 'undefined') return;
+        if (!google.script || !google.script.run) return;
+        google.script.run
+          .withSuccessHandler((updates) => {
+            if (!updates || !updates.length) return;
+            updates.forEach((u) => {
+              var asset = this.assets.find((a) => a.assetNo === u.assetNo);
+              if (asset && asset.syncStatus !== 2) {
+                asset.syncStatus = 2;
+                asset.timestamp = u.timestampStr;
+                asset.username = u.user;
+              }
+            });
+          })
+          .withFailureHandler(() => { /* silently ignore polling errors */ })
+          .getRecentUpdates();
       },
 
       scrollToAsset(assetNo) {
@@ -286,6 +309,8 @@
     mounted() {
       this.loadData();
       window.addEventListener("message", this.receiveMessage, false);
+      var self = this;
+      this.syncInterval = setInterval(function() { self.pollUpdates(); }, 5000);
     }
   }).mount('#app');
 </script>

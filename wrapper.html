@@ -148,6 +148,10 @@
         // 3. Scanner Logic
         let html5QrCode;
         let lastScanTime = 0;
+
+        // Read continuous mode from URL parameter
+        var urlParams = new URLSearchParams(window.location.search);
+        var isContinuous = urlParams.get('continuous') === 'true';
         
         function onScanSuccess(decodedText, decodedResult) {
             const now = Date.now();
@@ -164,6 +168,17 @@
                     window.opener.postMessage({ type: 'BARCODE', value: decodedText }, '*');
                 } else {
                     console.log("No opener window found. Simulated scan:", decodedText);
+                }
+
+                // In single-scan mode, auto-close after feedback
+                if (!isContinuous) {
+                    setTimeout(function() {
+                        if (html5QrCode && html5QrCode.isScanning) {
+                            html5QrCode.stop().then(function() { window.close(); }).catch(function() { window.close(); });
+                        } else {
+                            window.close();
+                        }
+                    }, 600);
                 }
             }
         }

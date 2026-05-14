@@ -72,7 +72,11 @@
           </select>
         </div>
 
-        <div class="d-flex justify-content-center mb-3" v-if="!bulkMode">
+        <div class="d-flex flex-column align-items-center mb-3" v-if="!bulkMode">
+          <div class="form-check form-switch w-100 mb-2 d-flex justify-content-end">
+            <input class="form-check-input me-2" type="checkbox" v-model="isContinuous" id="continuousScan">
+            <label class="form-check-label text-muted" style="font-size: 0.9rem;" for="continuousScan">Continuous Scan</label>
+          </div>
           <button class="btn btn-primary w-100 fw-bold py-2" style="font-size: 1.1rem;" @click="openWebScanner">
             📷 Open Web Scanner
           </button>

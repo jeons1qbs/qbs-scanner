@@ -113,6 +113,18 @@ function updateAsset(assetNo, payload) {
     }
     
     SpreadsheetApp.flush(); 
+
+    // Real-time sync: write to cache for other users
+    try {
+      var cache = CacheService.getScriptCache();
+      var raw = cache.get('recentUpdates');
+      var updates = raw ? JSON.parse(raw) : [];
+      var nowMs = Date.now();
+      updates.push({ assetNo: assetNo, user: payload.user, timestampStr: timestampStr, ts: nowMs });
+      updates = updates.filter(function(u) { return nowMs - u.ts < 120000; });
+      cache.put('recentUpdates', JSON.stringify(updates), 300);
+    } catch(cacheErr) { /* non-critical */ }
+
     return { success: true, assetNo: assetNo, timestamp: timestampStr };
   } catch (e) {
     return { success: false, error: e.toString() };
@@ -152,12 +164,39 @@ function updateAssetsBulk(assetNos, payload) {
        dataSheet.getRange(row, colMap.username + 1).setValue(payload.user);
     });
     SpreadsheetApp.flush(); 
+
+    // Real-time sync: write to cache for other users
+    try {
+      var cache = CacheService.getScriptCache();
+      var raw = cache.get('recentUpdates');
+      var updates = raw ? JSON.parse(raw) : [];
+      var nowMs = Date.now();
+      assetNos.forEach(function(an) {
+        updates.push({ assetNo: an.toString().trim(), user: payload.user, timestampStr: timestampStr, ts: nowMs });
+      });
+      updates = updates.filter(function(u) { return nowMs - u.ts < 120000; });
+      cache.put('recentUpdates', JSON.stringify(updates), 300);
+    } catch(cacheErr) { /* non-critical */ }
+
     return { success: true, timestamp: timestampStr };
     
   } catch (e) {
     return { success: false, error: e.toString() };
   } finally {
     lock.releaseLock();
+  }
+}
+
+// ==========================================
+// 6. REALTIME SYNC POLLING
+// ==========================================
+function getRecentUpdates() {
+  try {
+    var cache = CacheService.getScriptCache();
+    var raw = cache.get('recentUpdates');
+    return raw ? JSON.parse(raw) : [];
+  } catch(e) {
+    return [];
   }
 }
 
