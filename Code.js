@@ -222,15 +222,31 @@ function onEdit(e) {
     var updates = raw ? JSON.parse(raw) : [];
     var nowMs = Date.now();
 
+    // Collect edited assetNos so we can remove stale entries
+    var editedAssets = [];
+
     for (var row = startRow; row <= endRow; row++) {
       var assetNo = sheet.getRange(row, colMap.assetNo + 1).getValue().toString().trim();
+      if (!assetNo) continue;
       var timestamp = sheet.getRange(row, colMap.timestamp + 1).getValue().toString().trim();
       var username = sheet.getRange(row, colMap.username + 1).getValue().toString().trim();
-      if (!assetNo || !timestamp) continue;
-      updates.push({ assetNo: assetNo, user: username || 'sheet-edit', timestampStr: timestamp, ts: nowMs });
+      editedAssets.push(assetNo);
+      updates.push({
+        assetNo: assetNo,
+        user: username || 'sheet-edit',
+        timestampStr: timestamp,
+        ts: nowMs,
+        checked: !!timestamp   // false when timestamp was cleared
+      });
     }
 
-    updates = updates.filter(function(u) { return nowMs - u.ts < 120000; });
+    // Remove older entries for the same assets so the latest state wins
+    updates = updates.filter(function(u) {
+      if (u.ts === nowMs) return true;                             // keep new entries
+      if (editedAssets.indexOf(u.assetNo) > -1) return false;      // drop stale entries for edited assets
+      return nowMs - u.ts < 120000;                                // keep recent entries for other assets
+    });
+
     cache.put('recentUpdates', JSON.stringify(updates), 300);
   } catch(err) {
     // onEdit must never throw — silently fail

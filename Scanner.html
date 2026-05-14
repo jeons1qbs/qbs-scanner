@@ -184,10 +184,21 @@
             if (!updates || !updates.length) return;
             updates.forEach((u) => {
               var asset = this.assets.find((a) => a.assetNo === u.assetNo);
-              if (asset && asset.syncStatus !== 2) {
-                asset.syncStatus = 2;
-                asset.timestamp = u.timestampStr;
-                asset.username = u.user;
+              if (!asset) return;
+              // Handle unchecked events (timestamp was cleared in sheet)
+              if (u.checked === false) {
+                if (asset.syncStatus === 2) {
+                  asset.syncStatus = 0;
+                  asset.timestamp = '';
+                  asset.username = '';
+                }
+              } else {
+                // Handle checked events
+                if (asset.syncStatus !== 2) {
+                  asset.syncStatus = 2;
+                  asset.timestamp = u.timestampStr;
+                  asset.username = u.user;
+                }
               }
             });
           })
