@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <style>
+      /* NEW LAYOUT: Locks the main body, creates a flex layout for fixed header / scrollable list */
+      body { 
+        background-color: #f4f6f9; 
+        margin: 0; 
+        padding: 0; 
+        height: 100vh; /* Lock to viewport height */
+        overflow: hidden; /* Prevent whole-page scrolling */
+      }
+      
+      #app { 
+        display: flex; 
+        flex-direction: column; 
+        height: 100%; 
+        padding-top: 0.5rem;
+      }
+      
+      .top-fixed-area { 
+        flex-shrink: 0; /* Prevents the header from squishing */
+      }
+      
+      .scrollable-list-area { 
+        flex-grow: 1; /* Takes up remaining space */
+        overflow-y: auto; /* Only this area scrolls */
+        padding-bottom: 90px; /* Room for the bulk check footer */
+        padding-right: 5px; /* Tiny padding for the scrollbar */
+      }
+
+      .status-0 { border-left: 5px solid #6c757d; } 
+      .status-1 { border-left: 5px solid #fd7e14; background-color: #fff3cd; } 
+      .status-2 { border-left: 5px solid #198754; opacity: 0.85; } 
+      .asset-card { cursor: pointer; transition: background-color 0.4s ease; }
+      #reader { width: 100%; border-radius: 8px; overflow: hidden; margin-bottom: 10px; background: #e9ecef; min-height: 200px; display: flex; align-items: center; justify-content: center; }
+      .bg-completed { background-color: #d1e7dd !important; }
+      .info-badge { font-size: 0.75rem; padding: 3px 6px; border-radius: 4px; background: #e9ecef; color: #495057; border: 1px solid #ced4da; }
+      .bulk-checkbox { transform: scale(1.4); margin-right: 10px; cursor: pointer; }
+      [v-cloak] { display: none; }
+    </style>
+  </head>
+  <body>
+    
+    <div id="app" class="container" v-cloak>
+      
+      <div class="top-fixed-area">
+
+
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="m-0 text-primary">{{ currentSheet }}</h5>
+          <span class="badge bg-secondary">User: {{ currentUser }}</span>
+        </div>
+
+        <div v-if="trackedLocation && !bulkMode" class="alert alert-info py-2 mb-3" style="font-size: 0.85rem;">
+          📍 Physically scanning in: <strong>{{ trackedLocation }}</strong>
+        </div>
+
+        <div class="mb-3">
+          <select class="form-select fw-bold" 
+                  v-model="selectedLocation" 
+                  :class="{'bg-completed': isCurrentLocationComplete}">
+            <option value="All">All Locations ({{ totalChecked }}/{{ totalAssets }})</option>
+            <option v-for="loc in locationStats" :value="loc.name" :style="loc.isComplete ? 'background-color: #d1e7dd;' : ''">
+              {{ loc.isComplete ? '✅ ' : '' }}{{ loc.name }} ({{ loc.checked }}/{{ loc.total }})
+            </option>
+          </select>
+        </div>
+
+        <div class="d-flex justify-content-center mb-3" v-if="!bulkMode">
+          <button class="btn btn-primary w-100 fw-bold py-2" style="font-size: 1.1rem;" @click="openWebScanner">
+            📷 Open Web Scanner
+          </button>
+        </div>
+
+        <div class="d-flex justify-content-between align-items-end border-bottom pb-2 mb-2 mt-3">
+          <h6 class="m-0 text-secondary">Asset List</h6>
+          <div class="d-flex align-items-center gap-2">
+            <button class="btn btn-sm shadow-sm" 
+                    :class="bulkMode ? 'btn-primary' : 'btn-outline-secondary bg-white'" 
+                    @click="toggleBulkMode">
+              <span v-if="!bulkMode">☑️ Select</span>
+              <span v-else>Cancel Bulk</span>
+            </button>
+
+            <label class="text-muted mb-0 ms-1" style="font-size: 0.8rem;">Sort by:</label>
+            <select class="form-select form-select-sm" v-model="sortBy" style="width: auto; font-size: 0.8rem;">
+              <option value="assetNo">Asset No</option>
+              <option value="location">Location</option>
+              <option value="tag">Tag</option>
+              <option value="staffNo">Staff No</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <input type="text" class="form-control form-control-sm" v-model="searchQuery" placeholder="🔍 Search any column (Asset, Desc, Tag, etc.)...">
+        </div>
+
+      </div> 
+      <div class="scrollable-list-area">
+        
+        <div class="card mb-2 asset-card shadow-sm" 
+             v-for="asset in filteredAssets" :key="asset.assetNo"
+             :id="'asset-' + asset.assetNo"
+             :class="'status-' + asset.syncStatus"
+             @click="handleCardClick(asset)">
+          <div class="card-body py-2 d-flex align-items-start">
+            
+            <div v-if="bulkMode" class="pt-1 pe-2">
+              <input class="form-check-input bulk-checkbox" type="checkbox" :value="asset.assetNo" v-model="selectedAssets" :disabled="asset.syncStatus > 0" @click.stop>
+            </div>
+
+            <div class="flex-grow-1" style="min-width: 0;">
+              <div class="d-flex justify-content-between mb-1">
+                <strong style="font-size: 1.05rem;">{{ asset.assetNo }}</strong>
+                <span class="badge bg-secondary text-truncate ms-2" style="max-width: 100px;">{{ asset.location }}</span>
+              </div>
+              
+              <div class="text-truncate text-muted mb-1" style="font-size: 0.85rem;">{{ asset.description }}</div>
+              
+              <div v-if="asset.tag || asset.staffNo" class="d-flex gap-2 mb-2">
+                 <span v-if="asset.tag" class="info-badge">Tag: <strong>{{ asset.tag }}</strong></span>
+                 <span v-if="asset.staffNo" class="info-badge">Staff: <strong>{{ asset.staffNo }}</strong></span>
+              </div>
+              
+              <div v-if="asset.syncStatus === 2" class="p-2 mt-2 rounded" style="background-color: #e8f5e9; font-size: 0.8rem;">
+                <div class="text-success fw-bold">✓ Checked by {{ asset.username }}</div>
+                <div class="text-muted">{{ asset.timestamp }}</div>
+                <div v-if="asset.remarks" class="text-danger mt-1 fw-bold">Note: {{ asset.remarks }}</div>
+              </div>
+
+              <div v-if="asset.expanded && !bulkMode" class="mt-2 pt-2 border-top">
+                <div class="d-flex gap-1" v-if="!asset.editingRemark">
+                  <button class="btn btn-sm btn-outline-primary flex-grow-1 px-1" 
+                          @click.stop="manualCheck(asset)" :disabled="asset.syncStatus > 0">
+                    Check
+                  </button>
+                  <button class="btn btn-sm flex-grow-1 px-1" 
+                          :class="asset.needTag ? 'btn-danger' : 'btn-outline-danger'"
+                          @click.stop="toggleNeedTag(asset)">
+                    {{ asset.needTag ? 'Tag Needed' : 'Need Tag?' }}
+                  </button>
+                  <button class="btn btn-sm btn-outline-secondary px-2" @click.stop="asset.editingRemark = true">
+                    ✏️ Edit
+                  </button>
+                </div>
+
+                <div v-if="asset.editingRemark" class="mt-1 bg-light p-2 rounded border">
+                  <label class="text-muted mb-1" style="font-size: 0.8rem;">Add custom remark:</label>
+                  <textarea class="form-control mb-2" rows="2" style="font-size: 0.85rem; resize: vertical;" 
+                            v-model="asset.newRemark" placeholder="Type here..." @click.stop></textarea>
+                  <div class="d-flex justify-content-end gap-2">
+                    <button class="btn btn-sm btn-secondary" @click.stop="asset.editingRemark = false">Cancel</button>
+                    <button class="btn btn-sm btn-primary px-3" @click.stop="submitRemark(asset)">Submit</button>
+                  </div>
+                </div>
+
+                <div v-if="asset.remarks && asset.syncStatus < 2" class="mt-2" style="font-size: 0.75rem;">
+                   <span class="text-danger">Existing remarks: {{ asset.remarks }}</span>
+                </div>
+              </div>
+              
+            </div>
+          </div>
+        </div>
+        
+        <div v-if="filteredAssets.length === 0" class="text-center text-muted mt-4">
+          No assets found for current filter.
+        </div>
+      </div>
+      <div id="bulk-footer" v-if="bulkMode" v-cloak class="position-fixed bottom-0 start-0 w-100 bg-white p-3 shadow-lg border-top" style="z-index: 1050;">
+        <button class="btn w-100 fw-bold" :class="selectedAssets.length > 0 ? 'btn-success' : 'btn-secondary'" 
+                @click="bulkCheck" :disabled="selectedAssets.length === 0">
+          Bulk Check ({{ selectedAssets.length }} Selected)
+        </button>
+      </div>
+
+    </div>
+
+    <?!= include('Scanner'); ?>
+  </body>
+</html>

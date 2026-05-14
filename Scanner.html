@@ -1,0 +1,291 @@
+<script>
+  const { createApp } = Vue;
+
+  createApp({
+    data() {
+      return {
+        assets: [],
+        locationMap: {},
+        currentSheet: 'Loading...',
+        currentUser: '...',
+        selectedLocation: 'All',
+        trackedLocation: null, 
+        hideChecked: false,
+        sortBy: 'assetNo', 
+        searchQuery: '', // NEW: Tracks what the user types in the search box
+        lastScan: '',
+        
+        bulkMode: false,
+        selectedAssets: [],
+
+        isProcessing: false
+      }
+    },
+    computed: {
+      totalAssets() { return this.assets.length; },
+      totalChecked() { return this.assets.filter(a => a.syncStatus === 2).length; },
+      
+      locationStats() {
+        const stats = [];
+        const locNames = new Set(this.assets.map(a => a.location));
+        Array.from(locNames).sort().forEach(loc => {
+          const locAssets = this.assets.filter(a => a.location === loc);
+          const total = locAssets.length;
+          const checked = locAssets.filter(a => a.syncStatus === 2).length;
+          stats.push({ name: loc, total: total, checked: checked, isComplete: total > 0 && checked === total });
+        });
+        return stats;
+      },
+      
+      isCurrentLocationComplete() {
+        if (this.selectedLocation === 'All') return this.totalAssets > 0 && this.totalChecked === this.totalAssets;
+        const locInfo = this.locationStats.find(l => l.name === this.selectedLocation);
+        return locInfo ? locInfo.isComplete : false;
+      },
+      
+      filteredAssets() {
+        // 1. Filter by Location View and "Hide Checked" toggle
+        let filtered = this.assets.filter(a => {
+          const locMatch = this.selectedLocation === 'All' || a.location === this.selectedLocation;
+          const statusMatch = this.hideChecked ? a.syncStatus === 0 : true;
+          return locMatch && statusMatch;
+        });
+
+        // 2. NEW: Filter by Search Query across ALL columns
+        if (this.searchQuery && this.searchQuery.trim() !== '') {
+          const q = this.searchQuery.toLowerCase().trim();
+          filtered = filtered.filter(a => {
+            return (
+              (a.assetNo && a.assetNo.toLowerCase().includes(q)) ||
+              (a.location && a.location.toLowerCase().includes(q)) ||
+              (a.description && a.description.toLowerCase().includes(q)) ||
+              (a.tag && a.tag.toLowerCase().includes(q)) ||
+              (a.staffNo && a.staffNo.toLowerCase().includes(q)) ||
+              (a.remarks && a.remarks.toLowerCase().includes(q)) ||
+              (a.username && a.username.toLowerCase().includes(q))
+            );
+          });
+        }
+        
+        // 3. Sort the results
+        return filtered.sort((a, b) => {
+          let valA = (a[this.sortBy] || '').toString().toLowerCase();
+          let valB = (b[this.sortBy] || '').toString().toLowerCase();
+          if (valA < valB) return -1;
+          if (valA > valB) return 1;
+          return 0;
+        });
+      }
+    },
+    methods: {
+      loadData() {
+        google.script.run.withSuccessHandler(res => {
+          this.assets = res.assets.map(a => ({ 
+             ...a, 
+             expanded: false,
+             editingRemark: false,
+             newRemark: ''
+          }));
+          this.currentUser = res.currentUser;
+          this.locationMap = res.locationMap;
+          this.currentSheet = res.currentSheetName;
+        }).getInitialData();
+      },
+
+      handleCardClick(asset) {
+        if (this.bulkMode) {
+          if (asset.syncStatus > 0) return; 
+          const index = this.selectedAssets.indexOf(asset.assetNo);
+          if (index > -1) this.selectedAssets.splice(index, 1);
+          else this.selectedAssets.push(asset.assetNo);
+        } else {
+          asset.expanded = !asset.expanded;
+          if (!asset.expanded) asset.editingRemark = false;
+        }
+      },
+
+      toggleNeedTag(asset) {
+        asset.needTag = !asset.needTag;
+        if(asset.syncStatus > 0) this.syncAsset(asset, "");
+      },
+
+      manualCheck(asset) {
+        if (asset.syncStatus > 0) return;
+        this.processAssetCheck(asset);
+      },
+
+      submitRemark(asset) {
+        if (!asset.newRemark.trim()) {
+           asset.editingRemark = false;
+           return;
+        }
+        const formattedRemark = `${this.currentUser}:${asset.newRemark.trim()}`;
+        asset.remarks = asset.remarks ? asset.remarks + " | " + formattedRemark : formattedRemark;
+        this.syncAsset(asset, formattedRemark);
+        asset.newRemark = '';
+        asset.editingRemark = false;
+      },
+
+      toggleBulkMode() {
+        this.bulkMode = !this.bulkMode;
+        this.selectedAssets = [];
+      },
+
+      bulkCheck() {
+        if (this.selectedAssets.length === 0) return;
+        
+        const payload = { user: this.currentUser };
+        const assetsToUpdate = this.assets.filter(a => this.selectedAssets.includes(a.assetNo) && a.syncStatus === 0);
+        
+        assetsToUpdate.forEach(a => a.syncStatus = 1); 
+        const assetNos = assetsToUpdate.map(a => a.assetNo);
+
+        google.script.run
+          .withSuccessHandler(res => {
+             if(res.success) {
+               assetsToUpdate.forEach(a => {
+                 a.syncStatus = 2; 
+                 a.timestamp = res.timestamp;
+                 a.username = this.currentUser;
+               });
+               this.selectedAssets = [];
+               this.bulkMode = false;
+             } else {
+               assetsToUpdate.forEach(a => a.syncStatus = 0);
+               alert("Bulk sync failed: " + res.error);
+             }
+          })
+          .withFailureHandler(err => {
+             assetsToUpdate.forEach(a => a.syncStatus = 0);
+             alert("Connection error on bulk sync.");
+          })
+          .updateAssetsBulk(assetNos, payload);
+      },
+
+      openWebScanner() {
+        window.open('https://jeons1qbs.github.io/qbs-scanner/wrapper.html', '_blank');
+      },
+
+      receiveMessage(event) {
+        if (event.data && event.data.type === 'BARCODE') {
+          this.handleScan(event.data.value);
+        }
+      },
+
+      scrollToAsset(assetNo) {
+        this.$nextTick(() => {
+          const el = document.getElementById('asset-' + assetNo);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            const originalBg = el.style.backgroundColor;
+            el.style.backgroundColor = "#fff3cd"; 
+            setTimeout(() => { 
+              el.style.backgroundColor = originalBg; 
+            }, 800);
+          }
+        });
+      },
+
+      handleScan(rawText) {
+        this.isProcessing = true; 
+        
+        const text = rawText.split('|')[0].trim();
+        this.lastScan = text;
+        this.playBeep();
+
+        if (this.locationMap[text]) {
+          this.trackedLocation = this.locationMap[text];
+          this.selectedLocation = this.locationMap[text];
+          this.resumeScanner();
+          return;
+        }
+
+        const asset = this.assets.find(a => a.assetNo === text);
+        
+        if (!asset) {
+          alert(`Asset ${text} not found in database.`);
+          this.resumeScanner();
+          return;
+        }
+
+        this.scrollToAsset(asset.assetNo);
+
+        if (asset.syncStatus === 2) {
+           this.resumeScanner(); 
+           return; 
+        }
+
+        if (!this.trackedLocation) {
+          this.trackedLocation = asset.location;
+        }
+
+        if (this.selectedLocation !== 'All' && asset.location !== this.trackedLocation) {
+          const changeLoc = confirm(
+            `Mismatch Detected!\n\n` +
+            `This item belongs in [${asset.location}], but you are currently scanning in [${this.trackedLocation}].\n\n` +
+            `Click OK if you moved to a new room (${asset.location}).\n` +
+            `Click CANCEL if this item is MISLOCATED (found in ${this.trackedLocation}).`
+          );
+          
+          if (changeLoc) {
+            this.trackedLocation = asset.location;
+            this.selectedLocation = asset.location;
+            this.processAssetCheck(asset);
+          } else {
+            const remark = `${this.currentUser}: Mislocated. Found in ${this.trackedLocation}`;
+            asset.remarks = asset.remarks ? asset.remarks + " | " + remark : remark;
+            this.processAssetCheck(asset, remark);
+          }
+        } else {
+          this.processAssetCheck(asset);
+        }
+      },
+
+      processAssetCheck(asset, smartRemark = "") {
+        asset.syncStatus = 1; 
+        this.syncAsset(asset, smartRemark);
+        this.resumeScanner();
+      },
+
+      resumeScanner() {
+        setTimeout(() => { this.isProcessing = false; }, 1500);
+      },
+
+      syncAsset(asset, remark) {
+        const payload = {
+          user: this.currentUser,
+          needTag: asset.needTag,
+          remark: remark
+        };
+
+        google.script.run
+          .withSuccessHandler(res => {
+            if (res.success) {
+              asset.syncStatus = 2;
+              asset.timestamp = res.timestamp;
+              asset.username = this.currentUser;
+            } else {
+              asset.syncStatus = 0; 
+            }
+          })
+          .withFailureHandler(() => { asset.syncStatus = 0; })
+          .updateAsset(asset.assetNo, payload);
+      },
+
+      playBeep() {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(800, ctx.currentTime);
+        osc.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.1);
+      }
+    },
+    mounted() {
+      this.loadData();
+      window.addEventListener("message", this.receiveMessage, false);
+    }
+  }).mount('#app');
+</script>
