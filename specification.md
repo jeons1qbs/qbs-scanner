@@ -138,12 +138,13 @@ Column mapping is done dynamically by header text matching (`getColumnMap_`). De
 | Asset No | contains `"asset no"` | 0 | String (barcode value) |
 | Description | contains `"description"` | 1 | String |
 | Location | contains `"location"` | 3 | String (location name) |
-| Tag | exact match `"tag"` | 4 | String |
-| Staff No | contains `"staff no"` | 5 | String |
-| Timestamp | contains `"timestamp"` | 6 | String (written as `en-GB` locale) |
-| Username | contains `"username"` | 7 | String (email prefix) |
-| Need Tag | contains `"need tag"` | 8 | `"Yes"` or empty |
-| Remarks | contains `"remarks"` | 9 | String (pipe-delimited) |
+| New Location | contains `"new location"` | 4 | String (new location name) |
+| Tag | exact match `"tag"` | 5 | String |
+| Staff No | contains `"staff no"` | 6 | String |
+| Timestamp | contains `"timestamp"` | 7 | String (written as `en-GB` locale) |
+| Username | contains `"username"` | 8 | String (email prefix) |
+| Need Tag | contains `"need tag"` | 9 | `"Yes"` or empty |
+| Remarks | contains `"remarks"` | 10 | String (pipe-delimited) |
 
 **Check status logic:** If the `Timestamp` column has a value → `syncStatus = 2` (checked). Otherwise → `syncStatus = 0` (unchecked).
 
